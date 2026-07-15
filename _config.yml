@@ -1,7 +1,7 @@
 # Setup
 title:               TIL
 tagline:             SKALA TIL
-description:         SKALA 하면서 얻은 TIL을 기록하는 블로그
+description:         SKALA하면서 얻은 TIL을 기록하는 블로그
 url:                 https://P4NTENG.github.io
 baseurl:             ''
 paginate:            5
