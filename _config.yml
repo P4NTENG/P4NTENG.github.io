@@ -6,6 +6,11 @@ url:                 https://P4NTENG.github.io
 baseurl:             ''
 paginate:            5
 permalink:           pretty
+markdown: kramdown
+highlighter: rouge
+lsi: false
+excerpt_separator: "\n\n"
+incremental: false
 
 # About/contact
 author:
