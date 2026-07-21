@@ -388,7 +388,9 @@ $Softmax(z_i) = \frac{e^{z_i}}{\sum\limits_{j=1}^n e^{z_j}}$
 - Encoder: 입력 문장을 여러 층의 self-attention + feed forward network를 통해 벡터로 추출
 - Decoder: 인코딩된 벡터와 자기 자신의 출력에 대한 masked self-attention을 통해 목표 문장을 생성
 
-![transformer](/assets/img/transformer-architecture.jpg)
+<p align="center">
+  <img src="/assets/img/transformer-architecture.jpg">
+</p>
 
 **Encoder**  
 Scaled Dot-Product Attention - Self Attention  
