@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-to-post"
+version = "0.1.0"
+description = "Convert text-based lecture PDFs into reviewable Jekyll drafts."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyMuPDF>=1.24,<2",
+  "PyYAML>=6,<7",
+]
+
+[project.scripts]
+pdf-to-post = "pdf_to_post.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,7 @@
+site:
+  drafts_dir: _drafts
+  assets_dir: assets/img/posts
+
+post:
+  layout: post
+  source_heading: 강의 내용

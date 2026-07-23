@@ -7,7 +7,7 @@ title: Markdown hint
   Markdown 문서를 작성할 때 활용할 서식 태그 정리
 </p>
 
-# 강조 및 하이라이트 태그
+## 강조 및 하이라이트 태그
 - `<mark>`: 텍스트 형광펜 효과
 
 중요한 키워드나 강조하고 싶은 부분에 노란색 형광펜을 칠한 효과를 준다.  
@@ -26,7 +26,7 @@ title: Markdown hint
 `저장하려면 <kbd>Ctrl</kbd> + <kbd>S</kbd>를 누르세요.`  
 저장하려면 <kbd>Ctrl</kbd> + <kbd>S</kbd>를 누르세요.  
 
-# 레이아웃 및 영역 구분 태그
+## 레이아웃 및 영역 구분 태그
 
 - `<hr>`: 구분선(Horizontal Rule)
 
@@ -50,7 +50,7 @@ title: Markdown hint
   이 박스는 관련된 중요 정보를 하나로 묶어 보여줄 때 유용합니다.
 </fieldset>
 
-# 인라인 스타일을 활용한 알림(Alert) 박스
+## 인라인 스타일을 활용한 알림(Alert) 박스
 
 - `<div>`에 간단한 CSS 스타일을 적용하여 노션(Notion)의 콜아웃 박스 같은 서식 만들기.  
 
@@ -76,7 +76,7 @@ title: Markdown hint
   ⚠️ <strong>주의:</strong> 데이터를 삭제하면 복구할 수 없습니다.
 </div>
 
-# 텍스트 정렬 및 레이아웃
+## 텍스트 정렬 및 레이아웃
 
 - HTML을 사용하여 텍스트 중앙/우측 정렬
 

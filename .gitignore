@@ -41,3 +41,15 @@ validation-report.json
 # Folders to ignore
 node_modules
 bower_components
+
+# PDF-to-post local inputs and intermediate output
+lecture-pdfs/*
+!lecture-pdfs/.gitkeep
+.work/pdf-to-post/*
+!.work/pdf-to-post/.gitkeep
+
+# Python build and runtime artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
