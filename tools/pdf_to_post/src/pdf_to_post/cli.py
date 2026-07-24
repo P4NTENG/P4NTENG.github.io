@@ -78,8 +78,7 @@ def _parser() -> argparse.ArgumentParser:
     hybrid_extract.add_argument(
         "--pages",
         type=parse_pages,
-        default=(4, 19, 24),
-        help="쉼표로 구분한 1부터 시작하는 페이지 번호",
+        help="쉼표로 구분한 페이지 번호. 생략하면 문서 전체를 처리합니다.",
     )
     hybrid_extract.add_argument("--dpi", type=int, default=200)
     hybrid_extract.add_argument("--output", type=Path)

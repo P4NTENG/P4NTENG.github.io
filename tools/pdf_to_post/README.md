@@ -1,7 +1,8 @@
 # PDF to Jekyll Draft
 
 텍스트형 강의자료 PDF를 검수 가능한 Jekyll 초안으로 변환하는 최소 버전입니다.
-OCR, 이미지 추출, LLM 기반 재구성 및 자동 게시는 아직 포함하지 않습니다.
+하이브리드 경로는 OCR과 문서 구조 추출을 지원하며, LLM 기반 재구성과 자동 게시는
+아직 포함하지 않습니다.
 
 ## 설치
 
@@ -73,20 +74,78 @@ C:\Temp\pdf-to-post-docling\Scripts\python -m pip install -e "tools/pdf_to_post[
 모델은 첫 실행 때 `.work/pdf-to-post/cache/`에 다운로드됩니다. 비교표의 시간은
 모델 다운로드와 일부 초기화를 제외한 페이지 처리 시간의 합계입니다.
 
+## OpenVINO 준비
+
+하이브리드 추출의 PaddleOCR 검출 모델은 OpenVINO GPU FP32, 인식 모델은 OpenVINO
+CPU FP32로 실행합니다. 동적 shape 검출 모델은 반복 실행 중 OpenCL 이벤트 오류가
+발생하므로 첫 입력 텐서 크기로 정적 컴파일합니다. 이후 입력 크기가 바뀌면 해당
+크기로 다시 컴파일합니다.
+PaddleOCR CPU 벤치마크와 의존성을 분리하기 위해 전용 환경을 사용합니다.
+
+```powershell
+py -3.11 -m venv .work\pdf-to-post\venvs\openvino
+.work\pdf-to-post\venvs\openvino\Scripts\python -m pip install paddlepaddle==3.3.0 `
+  -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+.work\pdf-to-post\venvs\openvino\Scripts\python -m pip install `
+  -e "tools/pdf_to_post[paddle,openvino]"
+```
+
+OpenVINO가 현재 Paddle PIR 모델의 `inference.json`을 직접 읽지 못하므로 ONNX 모델을
+한 번 생성해 `.work/pdf-to-post/cache/openvino/models/`에 둡니다. 먼저 Paddle
+벤치마크를 한 번 실행해 원본 모델 캐시를 준비한 뒤 변환합니다.
+
+```powershell
+$paddlePython = ".work\pdf-to-post\venvs\paddle\Scripts\python"
+& $paddlePython -m pdf_to_post.cli benchmark lecture-pdfs\lecture.pdf `
+  --engine paddle --pages 1 --force
+
+py -3.11 -m venv .work\pdf-to-post\venvs\paddle2onnx
+$converter = ".work\pdf-to-post\venvs\paddle2onnx\Scripts"
+& "$converter\python" -m pip install packaging paddle2onnx==2.1.0
+& "$converter\python" -m pip install --force-reinstall --no-deps `
+  paddlepaddle==3.0.0.dev20250427 `
+  -i https://www.paddlepaddle.org.cn/packages/nightly/cpu/
+
+$source = ".work\pdf-to-post\cache\paddle\paddlex\official_models"
+$target = ".work\pdf-to-post\cache\openvino\models"
+New-Item -ItemType Directory -Force $target | Out-Null
+
+& "$converter\paddle2onnx" `
+  --model_dir "$source\PP-OCRv5_server_det" `
+  --model_filename inference.json --params_filename inference.pdiparams `
+  --save_file "$target\PP-OCRv5_server_det.onnx" `
+  --opset_version 11 --enable_onnx_checker True --optimize_tool None
+
+& "$converter\paddle2onnx" `
+  --model_dir "$source\korean_PP-OCRv5_mobile_rec" `
+  --model_filename inference.json --params_filename inference.pdiparams `
+  --save_file "$target\korean_PP-OCRv5_mobile_rec.onnx" `
+  --opset_version 11 --enable_onnx_checker True --optimize_tool None
+```
+
+실행 시 Intel GPU를 감지하지 못하거나 GPU·CPU 배치와 FP32 강제가 적용되지 않으면
+오류를 반환합니다.
+
 ## Paddle 텍스트와 Docling 구조 병합
 
 두 엔진의 최종 Markdown을 직접 합치지 않고 좌표가 포함된 공통 중간 형식을 먼저
 생성합니다. Paddle 환경은 OCR 텍스트·신뢰도·좌표를, Docling 환경은 제목·목록·표
 셀·코드·이미지 구조를 추출합니다.
 
+`--pages`를 생략하면 문서 전체를 품질 검사합니다. OCR 필요 페이지가 요청 범위의
+80% 이상이면 전체 범위를 PaddleOCR로 처리하고, 그보다 적으면 문제 페이지만
+OCR합니다. 정상 페이지는 Docling이 PDF 텍스트 계층에서 추출한 내용을 사용합니다.
+Docling 내부 OCR는 중복 인식을 피하기 위해 비활성화됩니다. `--pages 4,19,24`처럼
+명시하면 해당 범위 안에서만 같은 정책을 적용합니다.
+
 ```powershell
 $pdf = "lecture-pdfs\lecture.pdf"
 
-.work\pdf-to-post\venvs\paddle\Scripts\pdf-to-post `
-  hybrid-extract $pdf --engine paddle --pages 4,19,24
+.work\pdf-to-post\venvs\openvino\Scripts\pdf-to-post `
+  hybrid-extract $pdf --engine paddle
 
 C:\Temp\pdf-to-post-docling\Scripts\pdf-to-post `
-  hybrid-extract $pdf --engine docling --pages 4,19,24
+  hybrid-extract $pdf --engine docling
 
 .venv\Scripts\pdf-to-post hybrid-merge `
   .work\pdf-to-post\hybrid\paddle.json `

@@ -8,7 +8,7 @@ from pdf_to_post.benchmark import BenchmarkError, parse_pages
 from pdf_to_post.config import AppConfig
 from pdf_to_post.extract import ExtractedDocument, ExtractedPage
 from pdf_to_post.normalize import normalize_text, slugify
-from pdf_to_post.quality import assess_text_quality
+from pdf_to_post.quality import PageTextQuality, assess_text_quality, build_ocr_plan
 from pdf_to_post.render import escape_liquid, render_draft
 from pdf_to_post.validate import validate_markdown
 
@@ -108,6 +108,39 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(parse_pages("1, 4,4,19"), (1, 4, 19))
         with self.assertRaises(BenchmarkError):
             parse_pages("0,2")
+
+    def test_high_damage_ratio_uses_full_document_ocr(self) -> None:
+        broken = assess_text_quality("구조 ㏙구조㏚ § 㑄")
+        clean = assess_text_quality(
+            "Git은 변경 이력을 관리하는 분산 버전 관리 시스템입니다. "
+            "저장소를 만들고 변경 내용을 기록합니다."
+        )
+        plan = build_ocr_plan(
+            tuple(
+                PageTextQuality(page, broken if page < 5 else clean)
+                for page in range(1, 6)
+            )
+        )
+
+        self.assertEqual(plan.mode, "full")
+        self.assertEqual(plan.required_ratio, 0.8)
+        self.assertEqual(plan.ocr_pages, (1, 2, 3, 4, 5))
+
+    def test_low_damage_ratio_uses_selective_ocr(self) -> None:
+        broken = assess_text_quality("구조 ㏙구조㏚ § 㑄")
+        clean = assess_text_quality(
+            "Git은 변경 이력을 관리하는 분산 버전 관리 시스템입니다. "
+            "저장소를 만들고 변경 내용을 기록합니다."
+        )
+        plan = build_ocr_plan(
+            tuple(
+                PageTextQuality(page, broken if page == 2 else clean)
+                for page in range(1, 6)
+            )
+        )
+
+        self.assertEqual(plan.mode, "selective")
+        self.assertEqual(plan.ocr_pages, (2,))
 
 
 if __name__ == "__main__":

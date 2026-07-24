@@ -15,6 +15,7 @@ from pdf_to_post.hybrid import (
     render_hybrid_markdown,
 )
 from pdf_to_post.hybrid_extract import _docling_bbox
+from pdf_to_post.quality import PageTextQuality, assess_text_quality, build_ocr_plan
 
 
 def _span(box: tuple[float, float, float, float], text: str) -> OcrSpan:
@@ -181,6 +182,54 @@ class HybridMergeTests(unittest.TestCase):
 
         self.assertEqual(result.pages[0].blocks[0].text, "누락 방지")
         self.assertIn("대응하지 않는", result.pages[0].blocks[0].warnings[0])
+
+    def test_selective_plan_uses_docling_native_text_on_clean_page(self) -> None:
+        broken = assess_text_quality("구조 ㏙구조㏚ § 㑄")
+        clean = assess_text_quality(
+            "Git은 변경 이력을 관리하는 분산 버전 관리 시스템입니다. "
+            "저장소를 만들고 변경 내용을 기록합니다."
+        )
+        plan = build_ocr_plan(
+            (
+                PageTextQuality(1, broken),
+                PageTextQuality(2, clean),
+            )
+        )
+        paddle = EngineIR(
+            engine="paddle",
+            source="lecture.pdf",
+            pages=(
+                PageIR(1, 100, 100, spans=(_span((0.1, 0.1, 0.5, 0.2), "OCR"),)),
+                PageIR(2, 100, 100),
+            ),
+            ocr_plan=plan,
+        )
+        docling = EngineIR(
+            engine="docling",
+            source="lecture.pdf",
+            pages=(
+                PageIR(
+                    1,
+                    100,
+                    100,
+                    blocks=(StructureBlock("text", BBox(0.1, 0.1, 0.5, 0.2), 0, "깨진"),),
+                ),
+                PageIR(
+                    2,
+                    100,
+                    100,
+                    blocks=(StructureBlock("text", BBox(0.1, 0.1, 0.5, 0.2), 0, "정상"),),
+                ),
+            ),
+        )
+
+        loaded = EngineIR.from_dict(paddle.to_dict())
+        result = merge_documents(loaded, docling)
+
+        self.assertEqual(result.pages[0].blocks[0].text_source, "paddle")
+        self.assertEqual(result.pages[1].blocks[0].text, "정상")
+        self.assertEqual(result.pages[1].blocks[0].text_source, "docling-native")
+        self.assertEqual(result.pages[1].blocks[0].warnings, ())
 
     def test_rejects_different_page_sets(self) -> None:
         paddle = EngineIR("paddle", "lecture.pdf", (PageIR(1, 1, 1),))

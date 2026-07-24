@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from pdf_to_post.quality import OcrPlan
+
 
 SCHEMA_VERSION = 1
 IGNORED_BLOCK_TYPES = {"page_header", "page_footer"}
@@ -207,14 +209,18 @@ class EngineIR:
     source: str
     pages: tuple[PageIR, ...]
     schema_version: int = SCHEMA_VERSION
+    ocr_plan: OcrPlan | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        value: dict[str, object] = {
             "schema_version": self.schema_version,
             "engine": self.engine,
             "source": self.source,
             "pages": [page.to_dict() for page in self.pages],
         }
+        if self.ocr_plan is not None:
+            value["ocr_plan"] = self.ocr_plan.to_dict()
+        return value
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "EngineIR":
@@ -228,6 +234,11 @@ class EngineIR:
             source=str(value["source"]),
             pages=tuple(PageIR.from_dict(page) for page in value["pages"]),
             schema_version=schema_version,
+            ocr_plan=(
+                OcrPlan.from_dict(value["ocr_plan"])
+                if value.get("ocr_plan") is not None
+                else None
+            ),
         )
 
 
@@ -608,6 +619,77 @@ def merge_page(paddle_page: PageIR, docling_page: PageIR) -> MergedPage:
     return MergedPage(number=paddle_page.number, blocks=tuple(repaired))
 
 
+def _docling_native_table(
+    block: StructureBlock,
+) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...]]:
+    rows = max(
+        block.rows,
+        max((cell.row + cell.row_span for cell in block.cells), default=0),
+    )
+    columns = max(
+        block.columns,
+        max((cell.column + cell.column_span for cell in block.cells), default=0),
+    )
+    if rows == 0 or columns == 0:
+        return (), ("표의 행·열 정보를 복원하지 못함",)
+    grid = [["" for _ in range(columns)] for _ in range(rows)]
+    for cell in block.cells:
+        if cell.row < rows and cell.column < columns:
+            grid[cell.row][cell.column] = cell.text.strip()
+    return tuple(tuple(row) for row in grid), ()
+
+
+def merge_docling_native_page(docling_page: PageIR) -> MergedPage:
+    merged: list[MergedBlock] = []
+    for block in sorted(docling_page.blocks, key=lambda item: item.order):
+        if block.block_type in IGNORED_BLOCK_TYPES:
+            continue
+        if block.block_type == "table":
+            table, warnings = _docling_native_table(block)
+            merged.append(
+                MergedBlock(
+                    block_type="table",
+                    bbox=block.bbox,
+                    order=float(block.order),
+                    text="",
+                    confidence=None,
+                    text_source="docling-native",
+                    warnings=warnings,
+                    table=table,
+                )
+            )
+            continue
+        if block.block_type in {"picture", "chart"}:
+            merged.append(
+                MergedBlock(
+                    block_type=block.block_type,
+                    bbox=block.bbox,
+                    order=float(block.order),
+                    text="",
+                    confidence=None,
+                    text_source="image",
+                )
+            )
+            continue
+
+        text = block.text.strip()
+        marker = block.marker
+        if block.block_type == "list_item" and block.enumerated and not marker:
+            marker = "1."
+        merged.append(
+            MergedBlock(
+                block_type=block.block_type,
+                bbox=block.bbox,
+                order=float(block.order),
+                text=text,
+                confidence=None,
+                text_source="docling-native",
+                marker=marker,
+            )
+        )
+    return MergedPage(number=docling_page.number, blocks=tuple(merged))
+
+
 def merge_documents(paddle: EngineIR, docling: EngineIR) -> HybridResult:
     if paddle.engine != "paddle" or docling.engine != "docling":
         raise HybridError("Paddle 중간 결과와 Docling 중간 결과가 필요합니다.")
@@ -622,10 +704,19 @@ def merge_documents(paddle: EngineIR, docling: EngineIR) -> HybridResult:
             "두 중간 결과의 페이지가 일치하지 않습니다: "
             f"Paddle={sorted(paddle_pages)}, Docling={sorted(docling_pages)}"
         )
+    ocr_pages = (
+        set(paddle.ocr_plan.ocr_pages)
+        if paddle.ocr_plan is not None
+        else set(paddle_pages)
+    )
     return HybridResult(
         source=paddle.source,
         pages=tuple(
-            merge_page(paddle_pages[number], docling_pages[number])
+            (
+                merge_page(paddle_pages[number], docling_pages[number])
+                if number in ocr_pages
+                else merge_docling_native_page(docling_pages[number])
+            )
             for number in sorted(paddle_pages)
         ),
     )

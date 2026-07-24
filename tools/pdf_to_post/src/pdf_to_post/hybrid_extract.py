@@ -13,6 +13,12 @@ from pdf_to_post.hybrid import (
     StructureBlock,
     TableCell,
 )
+from pdf_to_post.openvino_backend import (
+    DETECTION_MODEL,
+    RECOGNITION_MODEL,
+    configure_openvino_gpu_fp32,
+)
+from pdf_to_post.quality import plan_pdf_ocr
 
 
 def _normalize_bbox(
@@ -55,6 +61,29 @@ def _render_pages(
 def extract_paddle_ir(
     source: Path, pages: tuple[int, ...], work_dir: Path, dpi: int
 ) -> EngineIR:
+    try:
+        plan = plan_pdf_ocr(source, pages)
+        import pymupdf
+    except Exception as error:
+        raise HybridError(f"페이지 텍스트 품질 검사에 실패했습니다: {error}") from error
+
+    if not plan.ocr_pages:
+        with pymupdf.open(source) as document:
+            native_pages = tuple(
+                PageIR(
+                    number=page_number,
+                    width=float(document[page_number - 1].rect.width),
+                    height=float(document[page_number - 1].rect.height),
+                )
+                for page_number in pages
+            )
+        return EngineIR(
+            engine="paddle",
+            source=source.name,
+            pages=native_pages,
+            ocr_plan=plan,
+        )
+
     _configure_paddle_cache(work_dir)
     try:
         from paddleocr import PaddleOCR
@@ -63,24 +92,26 @@ def extract_paddle_ir(
             "PaddleOCR 환경이 아닙니다. paddlepaddle과 paddleocr를 설치하세요."
         ) from error
 
-    rendered = _render_pages(source, pages, work_dir, dpi)
+    rendered = _render_pages(source, plan.ocr_pages, work_dir, dpi)
     try:
         pipeline = PaddleOCR(
-            lang="korean",
             device="cpu",
             enable_mkldnn=False,
+            text_detection_model_name=DETECTION_MODEL,
+            text_recognition_model_name=RECOGNITION_MODEL,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
         )
+        configure_openvino_gpu_fp32(pipeline, work_dir)
+    except HybridError:
+        raise
     except Exception as error:
         raise HybridError(f"PaddleOCR 모델 초기화 실패: {error}") from error
 
-    extracted_pages: list[PageIR] = []
+    extracted_by_page: dict[int, PageIR] = {}
     for page_number, image_path in rendered.items():
         try:
-            import pymupdf
-
             results = list(pipeline.predict(str(image_path)))
             if not results:
                 raise HybridError(f"PaddleOCR {page_number}페이지 결과가 없습니다.")
@@ -102,24 +133,40 @@ def extract_paddle_ir(
             raise
         except Exception as error:
             raise HybridError(f"PaddleOCR {page_number}페이지 추출 실패: {error}") from error
-        extracted_pages.append(
-            PageIR(number=page_number, width=width, height=height, spans=spans)
+        extracted_by_page[page_number] = PageIR(
+            number=page_number,
+            width=width,
+            height=height,
+            spans=spans,
         )
-    return EngineIR(engine="paddle", source=source.name, pages=tuple(extracted_pages))
+
+    with pymupdf.open(source) as document:
+        extracted_pages = tuple(
+            extracted_by_page.get(page_number)
+            or PageIR(
+                number=page_number,
+                width=float(document[page_number - 1].rect.width),
+                height=float(document[page_number - 1].rect.height),
+            )
+            for page_number in pages
+        )
+    return EngineIR(
+        engine="paddle",
+        source=source.name,
+        pages=extracted_pages,
+        ocr_plan=plan,
+    )
 
 
-def _configure_docling_cache(work_dir: Path) -> Path:
+def _configure_docling_cache(work_dir: Path) -> None:
     cache_root = work_dir / "cache" / "docling"
     for directory in (
-        cache_root / "easyocr",
         cache_root / "huggingface",
         cache_root / "torch",
     ):
         directory.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("EASYOCR_MODULE_PATH", str(cache_root / "easyocr"))
     os.environ.setdefault("HF_HOME", str(cache_root / "huggingface"))
     os.environ.setdefault("TORCH_HOME", str(cache_root / "torch"))
-    return cache_root
 
 
 def _docling_bbox(bbox: Any, width: float, height: float) -> BBox:
@@ -135,26 +182,21 @@ def extract_docling_ir(
     source: Path, pages: tuple[int, ...], work_dir: Path, dpi: int
 ) -> EngineIR:
     del dpi  # Docling은 PDF 좌표계에서 직접 처리한다.
-    cache_root = _configure_docling_cache(work_dir)
+    _configure_docling_cache(work_dir)
     try:
         from docling.datamodel.accelerator_options import AcceleratorDevice
         from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import EasyOcrOptions, PdfPipelineOptions
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
         from docling.document_converter import DocumentConverter, PdfFormatOption
     except ModuleNotFoundError as error:
         raise HybridError(
-            "Docling 환경이 아닙니다. `docling[easyocr]`를 설치하세요."
+            "Docling 환경이 아닙니다. docling을 설치하세요."
         ) from error
 
     options = PdfPipelineOptions()
-    options.do_ocr = True
+    options.do_ocr = False
     options.do_table_structure = True
     options.accelerator_options.device = AcceleratorDevice.CPU
-    options.ocr_options = EasyOcrOptions(
-        lang=["ko", "en"],
-        force_full_page_ocr=True,
-        model_storage_directory=str(cache_root / "easyocr"),
-    )
     converter = DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
     )
@@ -227,7 +269,7 @@ def extract_engine_ir(
     source: Path,
     *,
     engine: str,
-    pages: tuple[int, ...],
+    pages: tuple[int, ...] | None,
     work_dir: Path,
     dpi: int,
 ) -> EngineIR:
@@ -238,13 +280,15 @@ def extract_engine_ir(
         raise HybridError(f"PDF 파일만 처리할 수 있습니다: {pdf}")
     if not 100 <= dpi <= 600:
         raise HybridError("DPI는 100 이상 600 이하로 지정하세요.")
-    if not pages or any(page < 1 for page in pages):
+    if pages is not None and (not pages or any(page < 1 for page in pages)):
         raise HybridError("페이지 번호는 1 이상의 정수여야 합니다.")
 
     try:
         import pymupdf
 
         with pymupdf.open(pdf) as document:
+            if pages is None:
+                pages = tuple(range(1, document.page_count + 1))
             invalid = [page for page in pages if page > document.page_count]
     except Exception as error:
         raise HybridError(f"PDF를 읽지 못했습니다: {error}") from error
