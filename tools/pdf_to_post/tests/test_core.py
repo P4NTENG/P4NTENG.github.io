@@ -4,9 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pdf_to_post.benchmark import BenchmarkError, parse_pages
 from pdf_to_post.config import AppConfig
 from pdf_to_post.extract import ExtractedDocument, ExtractedPage
 from pdf_to_post.normalize import normalize_text, slugify
+from pdf_to_post.quality import assess_text_quality
 from pdf_to_post.render import escape_liquid, render_draft
 from pdf_to_post.validate import validate_markdown
 
@@ -87,6 +89,25 @@ class ConfigShapeTests(unittest.TestCase):
             source_heading="강의 내용",
         )
         self.assertFalse(config.drafts_dir.is_absolute())
+
+
+class QualityTests(unittest.TestCase):
+    def test_broken_unicode_requests_ocr(self) -> None:
+        quality = assess_text_quality("구조 ㏙구조㏚ § 㑄")
+        self.assertEqual(quality.decision, "ocr-required")
+        self.assertGreaterEqual(quality.suspicious_count, 3)
+
+    def test_clean_korean_text_keeps_native_extraction(self) -> None:
+        quality = assess_text_quality(
+            "Git은 변경 이력을 관리하는 분산 버전 관리 시스템입니다. "
+            "저장소를 만들고 변경 내용을 기록합니다."
+        )
+        self.assertEqual(quality.decision, "native-usable")
+
+    def test_page_parser_deduplicates_and_rejects_invalid_values(self) -> None:
+        self.assertEqual(parse_pages("1, 4,4,19"), (1, 4, 19))
+        with self.assertRaises(BenchmarkError):
+            parse_pages("0,2")
 
 
 if __name__ == "__main__":

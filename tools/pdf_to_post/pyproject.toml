@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-to-post"
-version = "0.1.0"
+version = "0.2.0"
 description = "Convert text-based lecture PDFs into reviewable Jekyll drafts."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,10 @@ dependencies = [
   "PyMuPDF>=1.24,<2",
   "PyYAML>=6,<7",
 ]
+
+[project.optional-dependencies]
+paddle = ["paddleocr[doc-parser]>=3.7,<4"]
+docling = ["docling[easyocr]>=2.115,<3"]
 
 [project.scripts]
 pdf-to-post = "pdf_to_post.cli:main"
